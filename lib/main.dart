@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'integration/ipc.dart';
 
 void main() {
   runApp(const MyApp());
@@ -55,6 +57,9 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
+  final IpcServer _ipc = IpcServer(port: 8765);
+  String _ipcStatus = 'Starting IPC…';
+  String? _lastMessage;
 
   void _incrementCounter() {
     setState(() {
@@ -109,14 +114,60 @@ class _MyHomePageState extends State<MyHomePage> {
               '$_counter',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
+            const SizedBox(height: 24),
+            Text('IPC: $_ipcStatus'),
+            const SizedBox(height: 8),
+            Text('Last message: ${_lastMessage ?? "(none)"}'),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+        onPressed: () {
+          // Local demo: emit an increment event via the IPC stream
+          _ipc.emit({'action': 'increment', 'source': 'local-demo'});
+        },
+        tooltip: 'Emit increment event',
+        child: const Icon(Icons.send),
       ), // This trailing comma makes auto-formatting nicer for build methods.
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _startIpc();
+  }
+
+  Future<void> _startIpc() async {
+    try {
+      await _ipc.start();
+      setState(() {
+        _ipcStatus = 'Listening on ws://127.0.0.1:8765/ws and /health';
+      });
+      _ipc.events.listen((event) {
+        // Basic protocol: { action: 'increment' | 'reset' | 'set', value?: int }
+        final action = event['action'];
+        if (action == 'increment') {
+          _incrementCounter();
+        } else if (action == 'reset') {
+          setState(() => _counter = 0);
+        } else if (action == 'set' && event['value'] is int) {
+          setState(() => _counter = event['value'] as int);
+        }
+        setState(() {
+          _lastMessage = jsonEncode(event);
+        });
+      });
+    } catch (e) {
+      setState(() {
+        _ipcStatus = 'IPC failed to start: $e';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ipc.stop();
+    super.dispose();
   }
 }
